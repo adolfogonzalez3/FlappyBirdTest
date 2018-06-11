@@ -14,6 +14,9 @@ import numpy as np
 from collections import deque
 
 import json
+import os
+import tensorflow as tf
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 from keras.initializers import normal, identity
 from keras.models import model_from_json
 from keras.models import Sequential
@@ -22,18 +25,29 @@ from keras.layers.convolutional import Convolution2D, MaxPooling2D
 from keras.optimizers import SGD , Adam
 import tensorflow as tf
 
+from tqdm import tqdm
+from Agent import Agent as Agent
+from Agent import rangefloat
+#from Agent import Async_Agent as Agent
+from itertools import count
+
+import matplotlib.pyplot as plt
+
+
 GAME = 'bird' # the name of the game being played for log files
 CONFIG = 'nothreshold'
 ACTIONS = 2 # number of valid actions
 GAMMA = 0.99 # decay rate of past observations
 OBSERVATION = 3200. # timesteps to observe before training
-EXPLORE = 3000000. # frames over which to anneal epsilon
+EXPLORE = 3000000 # frames over which to anneal epsilon
 FINAL_EPSILON = 0.0001 # final value of epsilon
 INITIAL_EPSILON = 0.1 # starting value of epsilon
-REPLAY_MEMORY = 50000 # number of previous transitions to remember
+REPLAY_MEMORY = 5000 # number of previous transitions to remember
 BATCH = 32 # size of minibatch
-FRAME_PER_ACTION = 1
+FRAME_PER_ACTION = 3
 LEARNING_RATE = 1e-4
+
+NUM_OF_EPISODES = 800
 
 img_rows , img_cols = 80, 80
 #Convert image into Black and white
@@ -58,7 +72,7 @@ def buildmodel():
     print("We finish building the model")
     return model
 
-def trainNetwork(model,args):
+def trainNetwork(model, args):
     # open up a game state to communicate with emulator
     game_state = game.GameState()
 
@@ -97,16 +111,23 @@ def trainNetwork(model,args):
         epsilon = INITIAL_EPSILON
 
     t = 0
-    while (True):
+    steps = count(1)
+    steps = tqdm(count())
+    episode_reward = 0
+    rewards = []
+    rewards.append(0)
+    episodes = 0
+    for t in steps:
         loss = 0
         Q_sa = 0
         action_index = 0
         r_t = 0
-        a_t = np.zeros([ACTIONS])
+        #a_t = np.zeros([ACTIONS])
         #choose an action epsilon greedy
         if t % FRAME_PER_ACTION == 0:
+            a_t = np.zeros([ACTIONS])
             if random.random() <= epsilon:
-                print("----------Random Action----------")
+                #print("----------Random Action----------")
                 action_index = random.randrange(ACTIONS)
                 a_t[action_index] = 1
             else:
@@ -131,13 +152,19 @@ def trainNetwork(model,args):
 
 
         x_t1 = x_t1.reshape(1, x_t1.shape[0], x_t1.shape[1], 1) #1x80x80x1
-        s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3)
-
+        s_t1 = np.append(x_t1.astype(np.float16), s_t[:, :, :, :3], axis=3)
+        episode_reward += r_t
         # store the transition in D
         D.append((s_t, action_index, r_t, s_t1, terminal))
         if len(D) > REPLAY_MEMORY:
             D.popleft()
 
+        if terminal is True:   
+            rewards.append(episode_reward)
+            episode_reward = 0
+            episodes += 1
+            if episodes == NUM_OF_EPISODES:
+                break
         #only train if done observing
         if t > OBSERVE:
             #sample a minibatch to train on
@@ -154,14 +181,6 @@ def trainNetwork(model,args):
             loss += model.train_on_batch(state_t, targets)
 
         s_t = s_t1
-        t = t + 1
-
-        # save progress every 10000 iterations
-        if t % 1000 == 0:
-            print("Now we save model")
-            model.save_weights("model.h5", overwrite=True)
-            with open("model.json", "w") as outfile:
-                json.dump(model.to_json(), outfile)
 
         # print info
         state = ""
@@ -171,17 +190,27 @@ def trainNetwork(model,args):
             state = "explore"
         else:
             state = "train"
+        output = ('STATE: {}/ EPSILON: {:.3f}/ ACTION: {!s}'
+                  '/ AVG REWARD: {!s}/ Q_MAX: {:3.1f}/ Loss: {:1.3f}')
+        output = output.format(state, epsilon, action_index,
+                              np.mean(rewards), np.max(Q_sa), loss)
+        steps.set_description(output)
 
-        print("TIMESTEP", t, "/ STATE", state, \
-            "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t, \
-            "/ Q_MAX " , np.max(Q_sa), "/ Loss ", loss)
-
+    plt.plot(rewards, range(len(rewards)), 'ro')
+    plt.ylabel('some numbers')
+    plt.show()
     print("Episode finished!")
     print("************************")
-
+    
 def playGame(args):
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = False
+    config.gpu_options.per_process_gpu_memory_fraction = 0.4
+    sess = tf.Session(config=config)
+    from keras import backend as K
+    K.set_session(sess)
     model = buildmodel()
-    trainNetwork(model,args)
+    trainNetwork(model, args)
 
 def main():
     parser = argparse.ArgumentParser(description='Description of your program')
@@ -190,9 +219,4 @@ def main():
     playGame(args)
 
 if __name__ == "__main__":
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    sess = tf.Session(config=config)
-    from keras import backend as K
-    K.set_session(sess)
     main()

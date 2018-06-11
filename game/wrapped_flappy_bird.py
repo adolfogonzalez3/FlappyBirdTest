@@ -7,7 +7,7 @@ import pygame.surfarray as surfarray
 from pygame.locals import *
 from itertools import cycle
 
-FPS = 30
+FPS = 0
 SCREENWIDTH  = 288
 SCREENHEIGHT = 512
 
@@ -58,8 +58,10 @@ class GameState:
         self.playerFlapped = False # True when player flaps
 
     def frame_step(self, input_actions):
-        pygame.event.pump()
-
+        #pygame.event.pump()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                sys.exit()
         reward = 0.1
         terminal = False
 
@@ -124,7 +126,7 @@ class GameState:
             terminal = True
             self.__init__()
             reward = -1
-
+        
         # draw sprites
         SCREEN.blit(IMAGES['background'], (0,0))
 
